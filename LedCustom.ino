@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <math.h>
 
+#define COLS 128
+#define COLOR_BITS 4
+
 // Define pin connections
 const int R1 = 25;
 const int G1 = 27;
@@ -20,7 +23,7 @@ const int CLK = 16;
 void setup()
 {
 
-    // Serial.begin(9600);
+    Serial.begin(115200);
 
     // Initialize all pins as outputs
     pinMode(R1, OUTPUT);
@@ -38,47 +41,113 @@ void setup()
     pinMode(LAT, OUTPUT);
     pinMode(CLK, OUTPUT);
 
+    resetColorsByStage();
+
     sendOutputEnable(true);
 }
 
-// void loop(){}
+// Brightness
+int brightnessPercentage = 30;
+int brightnessCycleMax = 50;
+int brightnessFraction = brightnessCycleMax / 100.0 * brightnessPercentage;
+int brightnesPortion = round(brightnessCycleMax / brightnessFraction);
+int brightnessCycle = 0;
 
-bool oe = true;
-int currentLoop = 0;
-int totalLoops = 60;
+// Color wheel
+int colorStage = 5;
+int colorStageAmplitude = 0;
+const int colorStageAmplitudeMax = 10;
 
-int red = 251;
-int green = 139;
+// Color
+const int colorMaxValue = (1 << COLOR_BITS) - 1;
+int currentColorLoop = 0;
+const int totalColorLoops = colorMaxValue;
+
+// Rotate
+int boxWidth = 24;
+int boxPosition = 0;
+bool boxDirection = true;
+
+int red = 0;
+int green = 0;
 int blue = 0;
-
-int redInterval = calculateColorInterval(totalLoops, red);
-int greenInterval = calculateColorInterval(totalLoops, green);
-int blueInterval = calculateColorInterval(totalLoops, blue);
 
 void loop()
 {
-    currentLoop = currentLoop == totalLoops ? 1 : currentLoop + 1;
+
+    if (currentColorLoop == totalColorLoops)
+    {
+        currentColorLoop = 0;
+
+        if (colorStageAmplitude == colorStageAmplitudeMax)
+        {
+
+            if (colorStage == 5)
+            {
+                colorStage = 0;
+                resetColorsByStage();
+            }
+            else
+                colorStage++;
+            colorStageAmplitude = 0;
+        }
+
+        colorStageAmplitude++;
+        setColorsByStageAmplitude(colorStage, colorStageAmplitude);
+
+        switch (colorStage)
+        {
+        case 0:
+            break;
+
+        default:
+            break;
+        }
+    }
+    else
+    {
+        currentColorLoop++;
+    }
+
+    int redInterval = calculateColorInterval(totalColorLoops, red);
+    int greenInterval = calculateColorInterval(totalColorLoops, green);
+    int blueInterval = calculateColorInterval(totalColorLoops, blue);
+    int redValue = calculateColorValue(currentColorLoop, redInterval);
+    int greenValue = calculateColorValue(currentColorLoop, greenInterval);
+    int blueValue = calculateColorValue(currentColorLoop, blueInterval);
+
+    // Update box position based on direction
+    boxPosition += (boxDirection ? 1 : -1);
+
+    // Check bounds and update direction if needed
+    if (boxPosition + boxWidth >= COLS || boxPosition <= 0) {
+        boxDirection = !boxDirection;
+        boxPosition = boxDirection ? 0 : COLS - boxWidth;
+    }
+
     for (int row = 0; row < 16; row++)
     {
         selectRow(row);
-        for (int col = 0; col < 64; col++)
+        for (int col = 0; col < COLS; col++)
         {
-            oe = !oe;
-            sendOutputEnable(oe);
+            brightnessCycle = (brightnessCycle + 1) % brightnessCycleMax;
+            if (brightnessCycle != 0)
+                sendOutputEnable(brightnessCycle % brightnesPortion == 0);
+            else
+                sendOutputEnable(true);
 
-            if (col > 26 && col < 38)
+            if (col >= boxPosition && col <= boxPosition + boxWidth)
             {
-                int redValue = calculateColorValue(currentLoop, redInterval);
-                int greenValue = calculateColorValue(currentLoop, greenInterval);
-                int blueValue = calculateColorValue(currentLoop, blueInterval);
                 sendColorDataUpper(redValue, greenValue, blueValue);
+                sendColorDataLower(redValue, greenValue, blueValue);
             }
             else
             {
                 sendColorDataUpper(0, 0, 0);
+                sendColorDataLower(0, 0, 0);
             }
 
-            sendColorDataLower(0, 0, 0);
+            //sendColorDataLower(0, 0, 0);
 
             clockPulse();
         }
@@ -95,7 +164,7 @@ int calculateColorValue(int currentLoop, int colorInterval)
 
 int calculateActionInterval(int totalLoops, int actionPercentage)
 {
-    float numberOfActions = (totalLoops * actionPercentage) / 100;
+    float numberOfActions = (totalLoops * actionPercentage) / 100.0;
     if (numberOfActions == 0)
         return -1;
     return round(totalLoops / numberOfActions);
@@ -103,10 +172,69 @@ int calculateActionInterval(int totalLoops, int actionPercentage)
 
 int calculateColorInterval(int totalLoops, int color)
 {
-    float fraction = totalLoops / 255.0;
+    float fraction = totalLoops / (float)colorMaxValue;
     float colorFraction = color * fraction;
     float percentage = colorFraction / totalLoops * 100;
     return calculateActionInterval(totalLoops, (int)percentage);
+}
+
+void resetColorsByStage()
+{
+    red = colorMaxValue;
+    green = 0;
+    blue = 0;
+}
+
+void setColorsByStageAmplitude(int colorStage, int colorStageAmplitude)
+{
+    int ascendingColor, descendingColor;
+    if (colorStageAmplitude == colorStageAmplitudeMax)
+    {
+        ascendingColor = colorMaxValue;
+        descendingColor = 0;
+    }
+    else
+    {
+        int stepSize = (int)(colorMaxValue / colorStageAmplitudeMax);
+        ascendingColor = stepSize * colorStageAmplitude;
+        descendingColor = colorMaxValue - (stepSize * colorStageAmplitude);
+    }
+
+    switch (colorStage)
+    {
+    case 0:
+        // Add blue
+        blue = ascendingColor;
+        break;
+
+    case 1:
+        // Remove red
+        red = descendingColor;
+        break;
+
+    case 2:
+        // Add green
+        green = ascendingColor;
+        break;
+
+    case 3:
+        // Remove blue
+        blue = descendingColor;
+        break;
+
+    case 4:
+        // Add red
+        red = ascendingColor;
+        break;
+
+    case 5:
+        // Remove green
+        green = descendingColor;
+        break;
+
+    default:
+        break;
+    }
 }
 
 void selectRow(int row)
@@ -147,8 +275,10 @@ void latchData()
 {
     digitalWrite(LAT, HIGH);
     digitalWrite(LAT, LOW);
+
     // After latching, turn off the output briefly to avoid ghosting
-    digitalWrite(OE, HIGH);
-    delayMicroseconds(100); // This delay might need adjustment
-    digitalWrite(OE, LOW);
+    sendOutputEnable(false);
+    // This delay might need adjustment
+    // delayMicroseconds(100);
+    sendOutputEnable(true);
 }
