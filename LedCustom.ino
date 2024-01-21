@@ -2,6 +2,7 @@
 #include <math.h>
 
 #define COLS 128
+#define ROWS 32
 #define COLOR_BITS 4
 
 // Define pin connections
@@ -64,9 +65,18 @@ int currentColorLoop = 0;
 const int totalColorLoops = colorMaxValue;
 
 // Rotate
-int boxWidth = 24;
+int boxWidth = 12;
 int boxPosition = 0;
 bool boxDirection = true;
+int currentBoxLoop = 0;
+const int totalBoxLoops = 8;
+
+// Row animation
+int currentRowLoop = 0;
+int currentRow = 0;
+int rowState = 0;
+const int totalRowLoops = 100;
+int boxHeight = boxWidth;
 
 int red = 0;
 int green = 0;
@@ -117,17 +127,49 @@ void loop()
     int blueValue = calculateColorValue(currentColorLoop, blueInterval);
 
     // Update box position based on direction
-    boxPosition += (boxDirection ? 1 : -1);
+    currentBoxLoop = (currentBoxLoop + 1) % totalBoxLoops;
+    if (currentBoxLoop == 0)
+    {
+        boxPosition += (boxDirection ? 1 : -1);
 
-    // Check bounds and update direction if needed
-    if (boxPosition + boxWidth >= COLS || boxPosition <= 0) {
-        boxDirection = !boxDirection;
-        boxPosition = boxDirection ? 0 : COLS - boxWidth;
+        // Check bounds and update direction if needed
+        if (boxPosition + boxWidth >= COLS || boxPosition <= 0)
+        {
+            boxDirection = !boxDirection;
+            boxPosition = boxDirection ? 0 : COLS - boxWidth;
+        }
     }
 
-    for (int row = 0; row < 16; row++)
+    for (int row = 0; row < ROWS / 2; row++)
     {
         selectRow(row);
+
+        // Update row based on current row loop
+        currentRowLoop = (currentRowLoop + 1) % totalRowLoops;
+        if (currentRowLoop == 0)
+        {
+            if (rowState == 0 && currentRow + boxHeight == ROWS)
+            {
+                rowState = 1;
+            }
+            else if (rowState == 1 && currentRow == 0)
+            {
+                rowState = 0;
+            }
+
+            switch (rowState)
+            {
+            case 0:
+                currentRow++;
+                break;
+            case 1:
+                currentRow--;
+                break;
+            default:
+                break;
+            }
+        }
+
         for (int col = 0; col < COLS; col++)
         {
             brightnessCycle = (brightnessCycle + 1) % brightnessCycleMax;
@@ -138,16 +180,25 @@ void loop()
 
             if (col >= boxPosition && col <= boxPosition + boxWidth)
             {
-                sendColorDataUpper(redValue, greenValue, blueValue);
-                sendColorDataLower(redValue, greenValue, blueValue);
+
+                int upperRow = row;
+                int lowerRow = row + ROWS / 2;
+
+                if (upperRow >= currentRow && upperRow < currentRow + boxHeight)
+                    sendColorDataUpper(redValue, greenValue, blueValue);
+                else
+                    sendColorDataUpper(0, 0, 0);
+
+                if (lowerRow >= currentRow && lowerRow < currentRow + boxHeight)
+                    sendColorDataLower(redValue, greenValue, blueValue);
+                else
+                    sendColorDataLower(0, 0, 0);
             }
             else
             {
                 sendColorDataUpper(0, 0, 0);
                 sendColorDataLower(0, 0, 0);
             }
-
-            //sendColorDataLower(0, 0, 0);
 
             clockPulse();
         }
@@ -239,11 +290,18 @@ void setColorsByStageAmplitude(int colorStage, int colorStageAmplitude)
 
 void selectRow(int row)
 {
+    if (row == 0)
+        row = ROWS / 2 - 1;
+    else
+        row--;
+
     digitalWrite(A, row & 0x01);
     digitalWrite(B, row & 0x02);
     digitalWrite(C, row & 0x04);
     digitalWrite(D, row & 0x08);
+    #if ROWS > 32
     digitalWrite(E, row & 0x10);
+    #endif
 }
 
 void sendColorDataUpper(byte red, byte green, byte blue)
@@ -279,6 +337,6 @@ void latchData()
     // After latching, turn off the output briefly to avoid ghosting
     sendOutputEnable(false);
     // This delay might need adjustment
-    // delayMicroseconds(100);
+    //delayMicroseconds(100);
     sendOutputEnable(true);
 }
